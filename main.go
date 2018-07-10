@@ -8,13 +8,14 @@ import (
     "time"
 
     "./Models"
-    messagingService "./Services"
     "github.com/gorilla/mux"
+    "github.com/cskr/pubsub"
 )
 
 const timeoutTime int = 30
-
+var passMessagesInternally = true
 var messageCount int
+var pubSub = pubsub.New(0);
 
 func PostMessage(resp http.ResponseWriter, req *http.Request) {
     params := mux.Vars(req)
@@ -23,7 +24,9 @@ func PostMessage(resp http.ResponseWriter, req *http.Request) {
     if err := json.NewDecoder(req.Body).Decode(&message); err != nil {
         fmt.Println(err)
     }
-    messagingService.Publish(message.Message, topic, "msg")
+
+    data := Models.Message{Message: message.Message, Event: "msg"}
+    pubSub.TryPub(data, topic)
 
     resp.WriteHeader(http.StatusNoContent)
 }
@@ -43,21 +46,19 @@ func GetMessages(resp http.ResponseWriter, req *http.Request) {
         return
     }
 
-    msgs := messagingService.Subscribe(topic)
+    internalMessages := pubSub.Sub(topic)
 
     forever := make(chan bool)
 
     go func() {
         for {
             select {
-            case message := <-msgs:
-                data := &Models.Message{}
+            case internalMessage := <-internalMessages:
                 messageCount++
-                err := json.Unmarshal(message.Body, data)
-                failOnError(err, "failed to deserialize")
+                msg := internalMessage.(Models.Message)
                 fmt.Fprintf(resp, "id: %d\n", messageCount)
-                fmt.Fprintf(resp, "event: %s\n", data.Event)
-                fmt.Fprintf(resp, "data: %s\n\n", data.Message)
+                fmt.Fprintf(resp, "event: %s\n", msg.Event)
+                fmt.Fprintf(resp, "data: %s\n\n", msg.Message)
                 flusher.Flush()
             case <-time.After(time.Duration(timeoutTime) * time.Second):
                 fmt.Fprintf(resp, "event: %s\n", "timeout")
