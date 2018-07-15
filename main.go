@@ -14,7 +14,7 @@ import (
 
 const timeoutTime int = 30
 var passMessagesInternally = true
-var messageCount int
+var messageCount int64
 var pubSub = pubsub.New(0);
 
 func PostMessage(resp http.ResponseWriter, req *http.Request) {
@@ -24,8 +24,8 @@ func PostMessage(resp http.ResponseWriter, req *http.Request) {
     if err := json.NewDecoder(req.Body).Decode(&message); err != nil {
         fmt.Println(err)
     }
-
-    data := Models.Message{Message: message.Message, Event: "msg"}
+    messageCount++
+    data := Models.Message{Message: message.Message, Event: "msg", Id: messageCount}
     pubSub.TryPub(data, topic)
 
     resp.WriteHeader(http.StatusNoContent)
@@ -48,15 +48,14 @@ func GetMessages(resp http.ResponseWriter, req *http.Request) {
 
     internalMessages := pubSub.Sub(topic)
 
-    forever := make(chan bool)
+    timeout := make(chan bool)
 
     go func() {
         for {
             select {
             case internalMessage := <-internalMessages:
-                messageCount++
                 msg := internalMessage.(Models.Message)
-                fmt.Fprintf(resp, "id: %d\n", messageCount)
+                fmt.Fprintf(resp, "id: %d\n", msg.Id)
                 fmt.Fprintf(resp, "event: %s\n", msg.Event)
                 fmt.Fprintf(resp, "data: %s\n\n", msg.Message)
                 flusher.Flush()
@@ -64,11 +63,14 @@ func GetMessages(resp http.ResponseWriter, req *http.Request) {
                 fmt.Fprintf(resp, "event: %s\n", "timeout")
                 fmt.Fprintf(resp, "data: %d sec\n\n", timeoutTime)
                 flusher.Flush()
+                timeout <- true
             }
         }
     }()
 
-    <-forever
+    <-timeout
+
+    resp.WriteHeader(http.StatusOK)
 }
 
 func failOnError(err error, msg string) {
